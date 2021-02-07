@@ -2,14 +2,21 @@ package main
 
 import (
 	"context"
+	"encoding/json"
+	"github.com/aws/aws-lambda-go/events"
 	"github.com/aws/aws-lambda-go/lambda"
 	"math"
+	"strconv"
 )
 
 const (
 	StandardExpenseFactor = 0.35
 	CashFlowWeight        = 1.2
 	ThirtyYears           = 360
+	AskPriceKey           = "ask_price"
+	IncomeKey             = "income"
+	ExpenseKey            = "expense"
+	InterestRateKey       = "interest_rate"
 )
 
 type Input struct {
@@ -46,13 +53,43 @@ func loanCalc(event Input, cashFlow float64) float64 {
 	return loanAmount
 }
 
-func HandleLambdaEvent(ctx context.Context, event Input) (Result, error) {
-	cashFlow := effectiveCashFlow(event)
-	loanAmount := loanCalc(event, cashFlow)
-	delta := event.AskPrice - loanAmount
-	return Result{InputData: event, EffectiveCashFlow: cashFlow, LoanAmount: loanAmount, Delta: delta}, nil
+func buildInput(query map[string]string) (Input, error) {
+	askPrice, err := strconv.ParseFloat(query[AskPriceKey], 64)
+	if err != nil {
+		return Input{}, err
+	}
+	income, err := strconv.ParseFloat(query[IncomeKey], 64)
+	if err != nil {
+		return Input{}, err
+	}
+	expense, err := strconv.ParseFloat(query[ExpenseKey], 64)
+	if err != nil {
+		return Input{}, err
+	}
+	interestRate, err := strconv.ParseFloat(query[InterestRateKey], 64)
+	if err != nil {
+		return Input{}, err
+	}
+	return Input{AskPrice: askPrice, Income: income, Expense: expense, InterestRate: interestRate}, nil
+}
+
+func generateResult(input Input) Result {
+	cashFlow := effectiveCashFlow(input)
+	loanAmount := loanCalc(input, cashFlow)
+	delta := input.AskPrice - loanAmount
+	return Result{InputData: input, EffectiveCashFlow: cashFlow, LoanAmount: loanAmount, Delta: delta}
+}
+
+func HandleRequest(ctx context.Context, request events.APIGatewayProxyRequest) (events.APIGatewayProxyResponse, error) {
+	input, err := buildInput(request.QueryStringParameters)
+	if err != nil {
+		return events.APIGatewayProxyResponse{StatusCode: 400}, nil
+	}
+	result := generateResult(input)
+	body, _ := json.Marshal(result)
+	return events.APIGatewayProxyResponse{Body: string(body), StatusCode: 200}, nil
 }
 
 func main() {
-	lambda.Start(HandleLambdaEvent)
+	lambda.Start(HandleRequest)
 }
